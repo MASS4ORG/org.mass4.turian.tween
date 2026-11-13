@@ -1,0 +1,31 @@
+{
+  "id": "org.mass4.turian.tween",
+  "version": "0.1.0",
+  "displayName": "Tweening",
+  "description": "Allocation-free tweens, sequences and easing, with game-feel effects: shake, punch, squash and stretch, hit-stop.",
+  "author": "MASS4",
+  "license": "MPL-2.0",
+  "engines": {
+    "turian": ">=4.1"
+  },
+  "categories": ["turian:gameplay"],
+  "keywords": ["tween", "easing", "animation", "game feel", "shake"],
+  "roles": {
+    "source": "Brick~/Source",
+    "tests": "Brick~/Tests",
+    "precast": "Brick~/Precast",
+    "bake": "Brick~/Bake"
+  },
+  "exclude": [
+    "Brick~/Tests",
+    ".github",
+    ".gitignore",
+    ".local",
+    ".script-*.py",
+    ".script-*.cs",
+    ".script-*.sh",
+    ".script-*.ps1",
+    ".editorconfig"
+  ],
+  "bake": "auto"
+}

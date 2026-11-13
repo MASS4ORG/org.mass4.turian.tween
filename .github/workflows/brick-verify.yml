@@ -1,0 +1,16 @@
+# Verification only; releases run from release tags in brick-release.yml.
+name: Brick
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  brick:
+    uses: MASS4ORG/brick-workflows/.github/workflows/verify.yml@v1
+    with:
+      source-tests: Brick~/Tests/Turian.Tweening.Tests/Turian.Tweening.Tests.csproj
