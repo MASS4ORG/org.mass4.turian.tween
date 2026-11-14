@@ -11,9 +11,16 @@ public sealed partial class TweenRunner
     {
         if (position < states[index].Delay)
         {
-            return false;
+            // A tween that never started has nothing to show; one that did plays back to its start values.
+            if (!states[index].Started)
+            {
+                return false;
+            }
+
+            position = states[index].Delay;
         }
 
+        var generation = states[index].Generation;
         if (!states[index].Started)
         {
             Begin(index);
@@ -30,7 +37,13 @@ public sealed partial class TweenRunner
             Apply(ref states[index], t, loop);
         }
 
-        if (done && !states[index].Completed)
+        if (!IsAlive(index, generation))
+        {
+            return done;
+        }
+
+        RaiseProgress(index, loop, done);
+        if (done && IsAlive(index, generation) && !states[index].Completed)
         {
             states[index].Completed = true;
             RemoveOffsets(ref states[index]);
@@ -38,6 +51,29 @@ public sealed partial class TweenRunner
         }
 
         return done;
+    }
+
+    void RaiseProgress(int index, int loop, bool done)
+    {
+        var generation = states[index].Generation;
+        states[index].OnUpdate?.Invoke();
+        if (!IsAlive(index, generation))
+        {
+            return;
+        }
+
+        var finished = states[index].Duration <= 0f ? (done ? 1 : 0) : done ? states[index].Loops : loop;
+        var fired = states[index].StepsFired;
+        states[index].StepsFired = finished;
+        if (finished <= fired || states[index].OnStepComplete is not { } step)
+        {
+            return;
+        }
+
+        for (var i = fired; i < finished; i++)
+        {
+            step();
+        }
     }
 
     void Begin(int index)
@@ -53,7 +89,7 @@ public sealed partial class TweenRunner
             state.From = Read(in state);
         }
 
-        if (state.Relative)
+        if (state.Relative && SupportsRelative(state.Kind))
         {
             state.To = state.Kind == TweenKind.Orientation
                 ? Pack(Unpack(state.From) * Unpack(state.To))
@@ -62,6 +98,10 @@ public sealed partial class TweenRunner
 
         state.OnStart?.Invoke();
     }
+
+    static bool SupportsRelative(TweenKind kind) => kind is TweenKind.Position or TweenKind.WorldPosition
+        or TweenKind.Orientation or TweenKind.Scale or TweenKind.Float or TweenKind.Vector3 or TweenKind.Vector4
+        or TweenKind.Color or TweenKind.Jump;
 
     static (int Loop, float T, bool Done) Progress(in TweenState state, float position)
     {
@@ -137,7 +177,21 @@ public sealed partial class TweenRunner
         {
             states[child].Completed = false;
             states[child].LastLoop = -1;
+            states[child].StepsFired = 0;
             ResetChildren(child);
+        }
+    }
+
+    // Returns a whole tree to its unplayed state, as a restart or a rewind begins.
+    void ResetTree(int index)
+    {
+        RemoveOffsets(ref states[index]);
+        states[index].Completed = false;
+        states[index].LastLoop = -1;
+        states[index].StepsFired = 0;
+        for (var child = states[index].FirstChild; child >= 0; child = states[child].NextSibling)
+        {
+            ResetTree(child);
         }
     }
 
@@ -162,97 +216,4 @@ public sealed partial class TweenRunner
 
         return end;
     }
-
-    static Vector4 Read(in TweenState state) => state.Node is { } node ? ReadNode(state.Kind, node) : ReadProperty(in state);
-
-    static Vector4 ReadNode(TweenKind kind, Node node) => kind switch
-    {
-        TweenKind.Position => Pack(node.Position),
-        TweenKind.WorldPosition => Pack(node.GlobalTransform.Position),
-        TweenKind.Orientation => Pack(node.Orientation),
-        _ => Pack(node.Scale),
-    };
-
-    static Vector4 ReadProperty(in TweenState state)
-    {
-        switch (state.Kind)
-        {
-            case TweenKind.Float:
-                return new Vector4(((Func<float>)state.Getter!)(), 0f, 0f, 0f);
-            case TweenKind.Vector3:
-                return Pack(((Func<Vector3>)state.Getter!)());
-            case TweenKind.Vector4:
-                return ((Func<Vector4>)state.Getter!)();
-            case TweenKind.Color:
-                var color = ((Func<Color>)state.Getter!)();
-                return new Vector4(color.R, color.G, color.B, color.A);
-            default:
-                return default;
-        }
-    }
-
-    static void Apply(ref TweenState state, float t, int loop)
-    {
-        if (state.Node is { IsDestroyed: true })
-        {
-            return;
-        }
-
-        var eased = Easing.Evaluate(state.Ease, t, state.Bezier);
-        if (state.Kind >= TweenKind.Shake)
-        {
-            ApplyGameFeel(ref state, eased);
-            return;
-        }
-
-        var value = Vector4.Lerp(state.From, state.To, eased);
-        if (state.LoopType == LoopType.Incremental)
-        {
-            value += (state.To - state.From) * loop;
-        }
-
-        switch (state.Kind)
-        {
-            case TweenKind.Position:
-                state.Node!.Position = Shrink(value);
-                break;
-            case TweenKind.WorldPosition:
-                state.Node!.GlobalTransform = state.Node.GlobalTransform with { Position = Shrink(value) };
-                break;
-            case TweenKind.Orientation:
-                state.Node!.Orientation = Quaternion.Slerp(Unpack(state.From), Unpack(state.To), eased);
-                break;
-            case TweenKind.Scale:
-                state.Node!.Scale = Shrink(value);
-                break;
-            default:
-                ApplyProperty(in state, value);
-                break;
-        }
-    }
-
-    static void ApplyProperty(in TweenState state, Vector4 value)
-    {
-        switch (state.Kind)
-        {
-            case TweenKind.Float:
-                ((Action<float>)state.Setter!)(value.X);
-                break;
-            case TweenKind.Vector3:
-                ((Action<Vector3>)state.Setter!)(Shrink(value));
-                break;
-            case TweenKind.Vector4:
-                ((Action<Vector4>)state.Setter!)(value);
-                break;
-            case TweenKind.Color:
-                ((Action<Color>)state.Setter!)(new Color(value.X, value.Y, value.Z, value.W));
-                break;
-        }
-    }
-
-    static Vector3 Shrink(Vector4 value) => new(value.X, value.Y, value.Z);
-
-    static Vector4 Pack(Quaternion value) => new(value.X, value.Y, value.Z, value.W);
-
-    static Quaternion Unpack(Vector4 value) => new(value.X, value.Y, value.Z, value.W);
 }

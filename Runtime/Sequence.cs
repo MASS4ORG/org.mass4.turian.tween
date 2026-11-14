@@ -73,6 +73,8 @@ public sealed partial class TweenRunner
         };
         entry.Parent = sequence.Index;
         entry.Start = start;
+        // A sequence keeps its length up to date as it grows, so one nested in another places what follows it correctly.
+        parent.Duration = MathF.Max(parent.Duration, start + entry.Total);
         if (placement != SequencePlacement.Insert)
         {
             parent.LastAppendStart = start;

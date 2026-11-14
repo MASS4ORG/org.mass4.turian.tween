@@ -43,6 +43,9 @@ public sealed partial class TweenRunner : ITickingSubsystem
     /// <summary>The unscaled seconds of the current frame, which keep passing while game time is paused or frozen.</summary>
     public float UnscaledDeltaTime { get; private set; }
 
+    /// <summary>The unscaled seconds since the session began, which keep passing while game time is paused or frozen.</summary>
+    public double UnscaledElapsed { get; private set; }
+
     /// <summary>How many tweens and sequences are alive, children included.</summary>
     public int ActiveCount { get; private set; }
 
@@ -68,6 +71,7 @@ public sealed partial class TweenRunner : ITickingSubsystem
     public void Tick(float deltaTime)
     {
         UnscaledDeltaTime = UnscaledStep(deltaTime);
+        UnscaledElapsed += UnscaledDeltaTime;
         AdvanceHitStop(UnscaledDeltaTime);
         // Tweens created by this frame's callbacks start next frame.
         for (int i = 0, count = used; i < count; i++)
@@ -82,16 +86,54 @@ public sealed partial class TweenRunner : ITickingSubsystem
     void Step(int index, float scaled)
     {
         ref var state = ref states[index];
-        if (state.Node is { IsDestroyed: true } || state.Cancellation.IsCancellationRequested)
+        if (state.Node is { IsDestroyed: true } || state.Link is { IsDestroyed: true }
+            || state.Cancellation.IsCancellationRequested)
         {
             Release(index);
             return;
         }
 
-        state.Elapsed += state.Unscaled ? UnscaledDeltaTime : scaled;
-        if (Evaluate(index, state.Elapsed))
+        var generation = state.Generation;
+        var step = (state.Unscaled ? UnscaledDeltaTime : scaled) * state.TimeScale;
+        if (state.Backwards)
+        {
+            StepBackwards(index, step);
+            return;
+        }
+
+        state.Elapsed += step;
+        // A callback may have killed this tween, and its slot may already hold another.
+        if (Evaluate(index, state.Elapsed) && IsAlive(index, generation))
+        {
+            Finish(index);
+        }
+    }
+
+    // Ends a played-out tween: it dies unless it was told to stay for a restart or a rewind.
+    void Finish(int index)
+    {
+        if (states[index].AutoKill)
         {
             Release(index);
+        }
+        else
+        {
+            states[index].Paused = true;
+        }
+    }
+
+    void StepBackwards(int index, float step)
+    {
+        var generation = states[index].Generation;
+        var position = states[index].Elapsed - step;
+        var atStart = position <= states[index].Delay;
+        states[index].Elapsed = atStart ? states[index].Delay : position;
+        Evaluate(index, states[index].Elapsed);
+        if (atStart && IsAlive(index, generation))
+        {
+            ResetTree(index);
+            states[index].Backwards = false;
+            Finish(index);
         }
     }
 
@@ -152,26 +194,42 @@ public sealed partial class TweenRunner : ITickingSubsystem
             return;
         }
 
-        var root = index;
-        while (states[root].Parent >= 0)
-        {
-            root = states[root].Parent;
-        }
-
+        var root = Root(index);
+        var rootGeneration = states[root].Generation;
         if (complete)
         {
-            if (!states[root].Started)
-            {
-                Begin(root);
-            }
-
-            if (float.IsFinite(states[root].Total))
-            {
-                Evaluate(root, states[root].Total);
-            }
+            JumpToEnd(root);
         }
 
-        Release(root);
+        if (IsAlive(root, rootGeneration))
+        {
+            Release(root);
+        }
+    }
+
+    int Root(int index)
+    {
+        while (states[index].Parent >= 0)
+        {
+            index = states[index].Parent;
+        }
+
+        return index;
+    }
+
+    // Puts a tween at its end and runs its completion; endless loops have no end and stay where they are.
+    void JumpToEnd(int root)
+    {
+        if (!states[root].Started)
+        {
+            Begin(root);
+        }
+
+        if (float.IsFinite(states[root].Total))
+        {
+            states[root].Elapsed = states[root].Total;
+            Evaluate(root, states[root].Total);
+        }
     }
 
     internal Task Completion(int index, int generation)
@@ -204,6 +262,10 @@ public sealed partial class TweenRunner : ITickingSubsystem
             Duration = duration,
             Loops = 1,
             LastLoop = -1,
+            AutoKill = true,
+            TimeScale = 1f,
+            Overshoot = float.NaN,
+            Period = float.NaN,
             Parent = -1,
             FirstChild = -1,
             LastChild = -1,
@@ -242,6 +304,7 @@ public sealed partial class TweenRunner : ITickingSubsystem
         RemoveOffsets(ref state);
         var completion = state.Completion;
         var completed = state.Completed;
+        var onKill = state.OnKill;
         state = new TweenState { Generation = state.Generation + 1 };
         free[freeCount++] = index;
         ActiveCount--;
@@ -253,6 +316,8 @@ public sealed partial class TweenRunner : ITickingSubsystem
         {
             completion?.TrySetCanceled();
         }
+
+        onKill?.Invoke();
     }
 
     float UnscaledStep(float scaled)

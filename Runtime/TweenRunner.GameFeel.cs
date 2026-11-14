@@ -3,6 +3,9 @@ namespace Turian.Tweening;
 public sealed partial class TweenRunner
 {
     float hitStopRemaining;
+    float hitStopRecover;
+    float hitStopRecovered;
+    double hitStopScale;
     double timeScaleBeforeHitStop;
     bool hitStopping;
 
@@ -18,6 +21,14 @@ public sealed partial class TweenRunner
     public Tween Shake(Node node, float duration, Vector3 strength, float frequency = 25f, int seed = 0) =>
         GameFeel(TweenKind.Shake, node, Pack(strength), duration, frequency, seed);
 
+    /// <summary>Shakes a node's local rotation by up to <paramref name="strength"/> Euler degrees per axis; see <see cref="Shake"/>.</summary>
+    public Tween ShakeRotation(Node node, float duration, Vector3 strength, float frequency = 25f, int seed = 0) =>
+        GameFeel(TweenKind.ShakeRotation, node, Pack(strength), duration, frequency, seed);
+
+    /// <summary>Shakes a node's local scale by up to <paramref name="strength"/> of itself per axis; see <see cref="Shake"/>.</summary>
+    public Tween ShakeScale(Node node, float duration, Vector3 strength, float frequency = 25f, int seed = 0) =>
+        GameFeel(TweenKind.ShakeScale, node, Pack(strength), duration, frequency, seed);
+
     /// <summary>Kicks a node's local position by <paramref name="punch"/> and springs it back to where it was.</summary>
     /// <param name="node">The node to punch.</param>
     /// <param name="punch">The kick, in local units.</param>
@@ -26,7 +37,7 @@ public sealed partial class TweenRunner
     public Tween PunchPosition(Node node, Vector3 punch, float duration, int vibrato = 6) =>
         GameFeel(TweenKind.PunchPosition, node, Pack(punch), duration, vibrato, 0);
 
-    /// <summary>Kicks a node's local scale by <paramref name="punch"/> and springs it back.</summary>
+    /// <summary>Grows a node's local scale by <paramref name="punch"/> of itself (0.5 is half again) and springs it back.</summary>
     public Tween PunchScale(Node node, Vector3 punch, float duration, int vibrato = 6) =>
         GameFeel(TweenKind.PunchScale, node, Pack(punch), duration, vibrato, 0);
 
@@ -58,8 +69,9 @@ public sealed partial class TweenRunner
     /// A hit-stop during another extends it.
     /// </summary>
     /// <param name="seconds">Unscaled seconds the freeze lasts.</param>
-    /// <param name="timeScale">The time scale during the freeze; zero stops game time.</param>
-    public void HitStop(float seconds, float timeScale = 0f)
+    /// <param name="timeScale">The time scale during the freeze; zero stops game time, a small value is slow motion.</param>
+    /// <param name="recoverSeconds">Unscaled seconds over which the time scale eases back after the freeze.</param>
+    public void HitStop(float seconds, float timeScale = 0f, float recoverSeconds = 0f)
     {
         if (clock is null || seconds <= 0f)
         {
@@ -73,6 +85,9 @@ public sealed partial class TweenRunner
         }
 
         clock.TimeScale = timeScale;
+        hitStopScale = timeScale;
+        hitStopRecover = MathF.Max(0f, recoverSeconds);
+        hitStopRecovered = 0f;
         hitStopRemaining = MathF.Max(hitStopRemaining, seconds);
     }
 
@@ -97,11 +112,26 @@ public sealed partial class TweenRunner
             return;
         }
 
-        hitStopRemaining -= unscaled;
-        if (hitStopRemaining <= 0f)
+        if (hitStopRemaining > 0f)
         {
-            EndHitStop();
+            hitStopRemaining -= unscaled;
+            if (hitStopRemaining > 0f)
+            {
+                return;
+            }
+
+            // Time left over after the freeze counts towards the recovery.
+            unscaled = -hitStopRemaining;
         }
+
+        hitStopRecovered += unscaled;
+        if (clock is not null && hitStopRecovered < hitStopRecover)
+        {
+            clock.TimeScale = hitStopScale + (timeScaleBeforeHitStop - hitStopScale) * (hitStopRecovered / hitStopRecover);
+            return;
+        }
+
+        EndHitStop();
     }
 
     void EndHitStop()
@@ -113,6 +143,7 @@ public sealed partial class TweenRunner
 
         hitStopping = false;
         hitStopRemaining = 0f;
+        hitStopRecovered = 0f;
     }
 
     static void ApplyGameFeel(ref TweenState state, float t)
@@ -121,7 +152,7 @@ public sealed partial class TweenRunner
         var fade = 1f - t;
         switch (state.Kind)
         {
-            case TweenKind.Shake:
+            case TweenKind.Shake or TweenKind.ShakeRotation or TweenKind.ShakeScale:
                 var time = t * state.Duration * state.Frequency;
                 var shake = Shrink(state.To) * fade * new Vector3(
                     Noise(state.Seed, time), Noise(state.Seed + 7919, time), Noise(state.Seed + 15887, time));
@@ -146,10 +177,11 @@ public sealed partial class TweenRunner
         var previous = Shrink(state.Applied);
         switch (state.Kind)
         {
-            case TweenKind.PunchScale:
-                node.Scale += offset - previous;
+            case TweenKind.PunchScale or TweenKind.ShakeScale or TweenKind.BlendScale:
+                // Scale effects multiply, so they compose with each other and with squash and stretch in any order.
+                node.Scale = node.Scale / ScaleFactor(previous) * ScaleFactor(offset);
                 break;
-            case TweenKind.PunchRotation:
+            case TweenKind.PunchRotation or TweenKind.ShakeRotation or TweenKind.BlendRotation:
                 node.Orientation *= Quaternion.Inverse(Euler(previous)) * Euler(offset);
                 break;
             default:
@@ -179,6 +211,8 @@ public sealed partial class TweenRunner
     }
 
     static Vector3 Multiplier(Vector4 applied) => applied == Vector4.Zero ? Vector3.One : Shrink(applied);
+
+    static Vector3 ScaleFactor(Vector3 offset) => Vector3.Max(Vector3.One + offset, new Vector3(1e-4f));
 
     static Quaternion Euler(Vector3 degrees) => Quaternion.CreateFromYawPitchRoll(
         degrees.Y * MathF.PI / 180f, degrees.X * MathF.PI / 180f, degrees.Z * MathF.PI / 180f);

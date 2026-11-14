@@ -4,9 +4,7 @@ namespace Turian.Tweening;
 public static class Easing
 {
     const float BackPull = 1.70158f;
-    const float BackPullInOut = BackPull * 1.525f;
-    const float ElasticPeriod = 2f * MathF.PI / 3f;
-    const float ElasticPeriodInOut = 2f * MathF.PI / 4.5f;
+    const float ElasticPeriod = 0.3f;
 
     static readonly CubicBezier CssEase = new(0.25f, 0.1f, 0.25f, 1f);
     static readonly CubicBezier CssEaseIn = new(0.42f, 0f, 1f, 1f);
@@ -25,16 +23,27 @@ public static class Easing
     /// <param name="ease">The curve.</param>
     /// <param name="t">Progress in [0, 1].</param>
     /// <param name="bezier">The curve used when <paramref name="ease"/> is <see cref="Ease.Bezier"/>.</param>
-    public static float Evaluate(Ease ease, float t, CubicBezier bezier = default) => ease switch
-    {
-        Ease.Bezier => bezier.Evaluate(t),
-        <= Ease.SmootherStep => Basic(ease, t),
-        <= Ease.InOutSine => Sine(ease, t),
-        <= Ease.InOutQuint => Polynomial(ease, t),
-        <= Ease.InOutExpo => Expo(ease, t),
-        <= Ease.InOutCirc => Circ(ease, t),
-        _ => Physical(ease, t),
-    };
+    public static float Evaluate(Ease ease, float t, CubicBezier bezier = default) =>
+        Evaluate(ease, t, float.NaN, float.NaN, bezier);
+
+    /// <summary>The value of <paramref name="ease"/> at progress <paramref name="t"/>, with the shape of back and elastic curves set.</summary>
+    /// <param name="ease">The curve.</param>
+    /// <param name="t">Progress in [0, 1].</param>
+    /// <param name="overshoot">How far a back curve pulls (default 1.70158), or an elastic curve's amplitude (default 1); NaN keeps the default.</param>
+    /// <param name="period">The wavelength of an elastic curve (default 0.3); NaN keeps the default.</param>
+    /// <param name="bezier">The curve used when <paramref name="ease"/> is <see cref="Ease.Bezier"/>.</param>
+    public static float Evaluate(Ease ease, float t, float overshoot, float period, CubicBezier bezier = default) =>
+        ease switch
+        {
+            Ease.Bezier => bezier.Evaluate(t),
+            Ease.Custom => t,
+            <= Ease.SmootherStep => Basic(ease, t),
+            <= Ease.InOutSine => Sine(ease, t),
+            <= Ease.InOutQuint => Polynomial(ease, t),
+            <= Ease.InOutExpo => Expo(ease, t),
+            <= Ease.InOutCirc => Circ(ease, t),
+            _ => Physical(ease, t, overshoot, period),
+        };
 
     static float Basic(Ease ease, float t) => ease switch
     {
@@ -90,7 +99,7 @@ public static class Easing
 
         var member = key.StartsWith("ease", StringComparison.Ordinal) ? key[4..] : key;
         if (member.Length > 0 && char.IsLetter(member[0]) && Enum.TryParse(member, ignoreCase: true, out ease)
-            && ease != Ease.Bezier)
+            && ease is not (Ease.Bezier or Ease.Custom))
         {
             return true;
         }
@@ -175,35 +184,55 @@ public static class Easing
             : (MathF.Sqrt(1f - MathF.Pow(-2f * t + 2f, 2f)) + 1f) / 2f,
     };
 
-    static float Physical(Ease ease, float t) => ease switch
+    static float Physical(Ease ease, float t, float overshoot, float period) => ease switch
     {
-        Ease.InBack => (BackPull + 1f) * t * t * t - BackPull * t * t,
-        Ease.OutBack => 1f + (BackPull + 1f) * MathF.Pow(t - 1f, 3f) + BackPull * MathF.Pow(t - 1f, 2f),
-        Ease.InOutBack => t < 0.5f
-            ? MathF.Pow(2f * t, 2f) * ((BackPullInOut + 1f) * 2f * t - BackPullInOut) / 2f
-            : (MathF.Pow(2f * t - 2f, 2f) * ((BackPullInOut + 1f) * (t * 2f - 2f) + BackPullInOut) + 2f) / 2f,
-        Ease.InElastic or Ease.OutElastic or Ease.InOutElastic => Elastic(ease, t),
+        Ease.InBack or Ease.OutBack or Ease.InOutBack => Back(ease, t, float.IsNaN(overshoot) ? BackPull : overshoot),
+        Ease.InElastic or Ease.OutElastic or Ease.InOutElastic => Elastic(ease, t, overshoot, period),
         Ease.InBounce => 1f - BounceOut(1f - t),
         Ease.OutBounce => BounceOut(t),
         _ => t < 0.5f ? (1f - BounceOut(1f - 2f * t)) / 2f : (1f + BounceOut(2f * t - 1f)) / 2f,
     };
 
-    static float Elastic(Ease ease, float t)
+    static float Back(Ease ease, float t, float pull)
+    {
+        var inOut = pull * 1.525f;
+        return ease switch
+        {
+            Ease.InBack => (pull + 1f) * t * t * t - pull * t * t,
+            Ease.OutBack => 1f + (pull + 1f) * MathF.Pow(t - 1f, 3f) + pull * MathF.Pow(t - 1f, 2f),
+            _ => t < 0.5f
+                ? MathF.Pow(2f * t, 2f) * ((inOut + 1f) * 2f * t - inOut) / 2f
+                : (MathF.Pow(2f * t - 2f, 2f) * ((inOut + 1f) * (t * 2f - 2f) + inOut) + 2f) / 2f,
+        };
+    }
+
+    static float Elastic(Ease ease, float t, float amplitude, float period)
     {
         if (t <= 0f || t >= 1f)
         {
             return t <= 0f ? 0f : 1f;
         }
 
-        return ease switch
+        var a = float.IsNaN(amplitude) ? 1f : MathF.Max(amplitude, 1f);
+        var wave = float.IsNaN(period) || period <= 0f ? ElasticPeriod : period;
+        if (ease != Ease.InOutElastic)
         {
-            Ease.InElastic => -MathF.Pow(2f, 10f * t - 10f) * MathF.Sin((t * 10f - 10.75f) * ElasticPeriod),
-            Ease.OutElastic => MathF.Pow(2f, -10f * t) * MathF.Sin((t * 10f - 0.75f) * ElasticPeriod) + 1f,
-            _ => t < 0.5f
-                ? -(MathF.Pow(2f, 20f * t - 10f) * MathF.Sin((20f * t - 11.125f) * ElasticPeriodInOut)) / 2f
-                : MathF.Pow(2f, -20f * t + 10f) * MathF.Sin((20f * t - 11.125f) * ElasticPeriodInOut) / 2f + 1f,
-        };
+            var shift = Shift(wave, a);
+            return ease == Ease.InElastic
+                ? -a * MathF.Pow(2f, 10f * (t - 1f)) * MathF.Sin((t - 1f - shift) * 2f * MathF.PI / wave)
+                : a * MathF.Pow(2f, -10f * t) * MathF.Sin((t - shift) * 2f * MathF.PI / wave) + 1f;
+        }
+
+        wave *= 1.5f;
+        var x = 2f * t - 1f;
+        var phase = (x - Shift(wave, a)) * 2f * MathF.PI / wave;
+        return x < 0f
+            ? -a * MathF.Pow(2f, 10f * x) * MathF.Sin(phase) / 2f
+            : a * MathF.Pow(2f, -10f * x) * MathF.Sin(phase) / 2f + 1f;
     }
+
+    // Where the wave starts, so that it crosses zero at the end of the curve for any amplitude.
+    static float Shift(float wave, float amplitude) => wave / (2f * MathF.PI) * MathF.Asin(1f / amplitude);
 
     static float BounceOut(float t)
     {

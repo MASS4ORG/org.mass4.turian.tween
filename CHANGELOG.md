@@ -6,4 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-- Added: tweens, sequences, easing and game-feel effects MASS4ORG/Turian#126.
+- Added: tweens, sequences, easing, springs, game-feel effects.
+
+## [v1.0.0]
+
+- first commit.

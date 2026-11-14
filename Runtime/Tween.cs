@@ -5,7 +5,7 @@ namespace Turian.Tweening;
 /// completed or was killed reports <see cref="IsActive"/> false and refuses changes. Awaiting a tween completes when
 /// it finishes and is cancelled when it is killed.
 /// </summary>
-public readonly struct Tween : IEquatable<Tween>
+public readonly partial struct Tween : IEquatable<Tween>
 {
     readonly TweenRunner? runner;
 
@@ -56,6 +56,61 @@ public readonly struct Tween : IEquatable<Tween>
 
         ref var state = ref State;
         (state.Ease, state.Bezier) = (ease, curve);
+        return this;
+    }
+
+    /// <summary>Shapes the tween's progress with your own function from [0, 1] to a value that is 0 at 0 and 1 at 1.</summary>
+    public Tween SetEase(Func<float, float> curve)
+    {
+        ArgumentNullException.ThrowIfNull(curve);
+        ref var state = ref State;
+        (state.Ease, state.EaseFunction) = (Ease.Custom, curve);
+        return this;
+    }
+
+    /// <summary>How far a back ease pulls (default 1.70158) or an elastic ease's amplitude (default 1).</summary>
+    public Tween SetEaseOvershoot(float overshoot)
+    {
+        State.Overshoot = overshoot;
+        return this;
+    }
+
+    /// <summary>The wavelength of an elastic ease, as a fraction of the tween (default 0.3).</summary>
+    public Tween SetEasePeriod(float period)
+    {
+        State.Period = period;
+        return this;
+    }
+
+    /// <summary>Tags the tween so <see cref="TweenRunner.Kill(object, bool)"/> and its siblings can find it.</summary>
+    public Tween SetId(object id)
+    {
+        State.Id = id;
+        return this;
+    }
+
+    /// <summary>Kills the tween when <paramref name="node"/> is destroyed, for tweens that do not target a node.</summary>
+    public Tween SetLink(Node node)
+    {
+        State.Link = node;
+        return this;
+    }
+
+    /// <summary>
+    /// Whether the tween dies when it finishes (the default). A tween that stays can be restarted, rewound or played
+    /// backwards, and holds its slot until it is killed.
+    /// </summary>
+    public Tween SetAutoKill(bool autoKill = true)
+    {
+        State.AutoKill = autoKill;
+        return this;
+    }
+
+    /// <summary>Plays the tween at <paramref name="speed"/> times its normal pace.</summary>
+    public Tween SetSpeed(float speed)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(speed);
+        State.TimeScale = speed;
         return this;
     }
 
@@ -116,10 +171,31 @@ public readonly struct Tween : IEquatable<Tween>
         return this;
     }
 
+    /// <summary>Runs <paramref name="action"/> each frame the tween changes its target.</summary>
+    public Tween OnUpdate(Action action)
+    {
+        State.OnUpdate = action;
+        return this;
+    }
+
+    /// <summary>Runs <paramref name="action"/> each time a loop finishes, the last one included.</summary>
+    public Tween OnStepComplete(Action action)
+    {
+        State.OnStepComplete = action;
+        return this;
+    }
+
     /// <summary>Runs <paramref name="action"/> when the tween has played every loop.</summary>
     public Tween OnComplete(Action action)
     {
         State.OnComplete = action;
+        return this;
+    }
+
+    /// <summary>Runs <paramref name="action"/> when the tween is gone, finished or killed.</summary>
+    public Tween OnKill(Action action)
+    {
+        State.OnKill = action;
         return this;
     }
 

@@ -122,6 +122,9 @@ public enum Ease
 
     /// <summary>A custom curve given as a <see cref="CubicBezier"/>.</summary>
     Bezier,
+
+    /// <summary>A custom function given to <see cref="Tween.SetEase(System.Func{float, float})"/>.</summary>
+    Custom,
 }
 
 /// <summary>A CSS <c>cubic-bezier()</c> timing curve through (0, 0) and (1, 1).</summary>

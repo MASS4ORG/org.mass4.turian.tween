@@ -26,11 +26,19 @@ enum TweenKind : byte
     Sequence,
     Callback,
     Interval,
+    RotateBy,
+    Jump,
+    Path,
+    BlendPosition,
+    BlendScale,
+    BlendRotation,
     Shake,
     PunchPosition,
     PunchScale,
     PunchRotation,
     SquashStretch,
+    ShakeRotation,
+    ShakeScale,
 }
 
 /// <summary>One pooled tween slot; values travel as <see cref="Vector4"/>, orientations as packed quaternions.</summary>
@@ -61,8 +69,23 @@ struct TweenState
     public CubicBezier Bezier;
     public float Frequency;
     public int Seed;
+    public float Overshoot;
+    public float Period;
+    public Func<float, float>? EaseFunction;
+    public float Amount;
+    public int Mode;
+    public Vector3[]? Waypoints;
+    public bool Backwards;
+    public bool AutoKill;
+    public float TimeScale;
+    public int StepsFired;
+    public object? Id;
+    public Node? Link;
     public Action? OnStart;
+    public Action? OnUpdate;
+    public Action? OnStepComplete;
     public Action? OnComplete;
+    public Action? OnKill;
     public TaskCompletionSource? Completion;
     public CancellationToken Cancellation;
     public int Parent;
